@@ -202,7 +202,12 @@ object ModelRepository {
                             return false
                         }
                         Log.d(TAG, "Redirecting to: $newUrl")
-                        currentUrl = newUrl
+                        // HuggingFace returns a RELATIVE Location (e.g. /api/resolve-cache/...)
+                        // for small non-LFS files like the OmniVoice config/manifest JSON.
+                        // Passing that straight to URL() throws MalformedURLException, which
+                        // killed the download at exactly 80% (8 of 10 files done). Resolve the
+                        // Location against the current URL so relative redirects work too.
+                        currentUrl = URL(URL(currentUrl), newUrl).toString()
                         connection.disconnect()
                         redirectCount++
                     }
