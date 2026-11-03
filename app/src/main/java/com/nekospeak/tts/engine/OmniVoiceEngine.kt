@@ -618,10 +618,28 @@ class OmniVoiceEngine(private val context: Context) : TtsEngine {
                 }
             }
 
-            // Run model inference
-            val inputIdsTensor = OnnxTensor.createTensor(env, bIds)
-            val audioMaskTensor = OnnxTensor.createTensor(env, inputs.batchAudioMask)
-            val attnTensor = OnnxTensor.createTensor(env, inputs.batchAttentionMask)
+            // Run model inference.
+            // The model declares ranked inputs — input_ids [2, C, maxLen],
+            // audio_mask [2, maxLen], attention_mask [2, 1, maxLen, maxLen] —
+            // but the buffers above are flat, and createTensor(env, flatArray)
+            // builds a rank-1 tensor that ORT rejects ("invalid rank") on the
+            // very first step, so synthesis failed before producing any audio.
+            // Re-nest the flat buffers (their layout already matches row-major
+            // [batch][codebook][time]) so the tensor ranks match the model.
+            val inputIdsNested = Array(2) { b ->
+                Array(C) { c -> bIds.copyOfRange((b * C + c) * maxLen, (b * C + c + 1) * maxLen) }
+            }
+            val audioMaskNested = Array(2) { b ->
+                inputs.batchAudioMask.copyOfRange(b * maxLen, (b + 1) * maxLen)
+            }
+            val attnNested = Array(2) { b ->
+                arrayOf(Array(maxLen) { q ->
+                    inputs.batchAttentionMask.copyOfRange((b * maxLen + q) * maxLen, (b * maxLen + q + 1) * maxLen)
+                })
+            }
+            val inputIdsTensor = OnnxTensor.createTensor(env, inputIdsNested)
+            val audioMaskTensor = OnnxTensor.createTensor(env, audioMaskNested)
+            val attnTensor = OnnxTensor.createTensor(env, attnNested)
 
             val results = session.run(mapOf(
                 "input_ids" to inputIdsTensor,
@@ -795,13 +813,19 @@ class OmniVoiceEngine(private val context: Context) : TtsEngine {
         val codes = LongArray(C * numTargetTokens)
         System.arraycopy(tokens, 0, codes, 0, min(tokens.size, codes.size))
 
-        val codesTensor = OnnxTensor.createTensor(env, codes)
+        // audio_codes is declared [1, C, time_steps] — feed the nested shape,
+        // not a flat rank-1 tensor (same invalid-rank failure as the main model).
+        val codesNested = arrayOf(Array(C) { c -> codes.copyOfRange(c * numTargetTokens, (c + 1) * numTargetTokens) })
+        val codesTensor = OnnxTensor.createTensor(env, codesNested)
         val result = session.run(mapOf("audio_codes" to codesTensor))
         val audioResult = result["audio_values"] ?: return FloatArray(0)
         val audioTensor = audioResult as? OnnxTensor ?: return FloatArray(0)
 
+        // audio_values is [1, 1, samples] — its value is a nested array,
+        // not a FloatArray; unwrap the two leading dimensions.
         @Suppress("UNCHECKED_CAST")
-        return audioTensor.value as FloatArray
+        val nested = audioTensor.value as Array<Array<FloatArray>>
+        return nested[0][0]
     }
 
     // ========================================================================
