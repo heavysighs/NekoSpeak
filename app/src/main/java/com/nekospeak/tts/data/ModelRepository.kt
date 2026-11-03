@@ -111,8 +111,12 @@ object ModelRepository {
             // Encoder is optional (624MB, voice cloning only) — don't block install check
             if (modelId == "omnivoice" && fileDef.fileName.contains("encoder")) return@all true
             val file = File(context.filesDir, fileDef.fileName)
-            // Check file exists and has reasonable size (> 1KB to avoid placeholder files)
-            file.exists() && file.length() > 1024
+            // Check file exists and has reasonable size (> 1KB to avoid placeholder files).
+            // Exception: small JSON files are legitimately tiny — OmniVoice's config is
+            // 218 bytes and its manifest is 155 bytes, so a flat >1KB rule made OmniVoice
+            // NEVER register as installed even after a fully successful download, which
+            // also blocked selecting it. For .json files any non-empty file counts.
+            file.exists() && (file.length() > 1024 || (fileDef.fileName.endsWith(".json") && file.length() > 0))
         }
     }
     
@@ -131,8 +135,8 @@ object ModelRepository {
             for (fileDef in model.files) {
                 val targetFile = File(context.filesDir, fileDef.fileName)
                 
-                // Skip if already downloaded and valid
-                if (targetFile.exists() && targetFile.length() > 1024) {
+                // Skip if already downloaded and valid (same small-JSON exception as isInstalled)
+                if (targetFile.exists() && (targetFile.length() > 1024 || (fileDef.fileName.endsWith(".json") && targetFile.length() > 0))) {
                     Log.d(TAG, "File already exists: ${fileDef.fileName}")
                     filesDownloaded++
                     progressFlow.value = filesDownloaded.toFloat() / totalFiles
