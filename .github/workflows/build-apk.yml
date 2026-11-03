@@ -12,7 +12,7 @@ jobs:
           distribution: temurin
           java-version: '17'
       - name: Generate release keystore
-        run: keytool -genkeypair -v -keystore app/release.keystore -alias nekospeak -keyalg RSA -keysize 2048 -validity 10000 -storepass nekospeak123 -keypass nekospeak123 -dname "CN=NekoSpeak, O=NekoSpeak, C=US"
+        run: test -f app/release.keystore
       - name: Build release APKs
         run: |
           chmod +x gradlew
